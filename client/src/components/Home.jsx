@@ -2,7 +2,242 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 function Home() {
-  
+  const [employees, setEmployees] = useState([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState('add'); // 'add' or 'edit'
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [formData, setFormData] = useState({
+    id: '',
+    name: '',
+    department: '',
+    joiningDate: '',
+    salary: '',
+    status: true,
+  });
+  const [formErrors, setFormErrors] = useState({});
+  const [error, setError] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+  const employeesPerPage = 6;
+
+  // Apply theme and persist in localStorage
+  useEffect(() => {
+    console.log('Applying theme:', theme); // Debug theme state
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+    // Verify class application
+    console.log('HTML classList:', document.documentElement.classList.toString());
+  }, [theme]);
+
+  // Toggle theme
+  const toggleTheme = () => {
+    setTheme(prevTheme => {
+      const newTheme = prevTheme === 'light' ? 'dark' : 'light';
+      console.log('Toggling to theme:', newTheme); // Debug toggle
+      return newTheme;
+    });
+  };
+
+  // Fetch employees on mount and sort by id
+  useEffect(() => {
+    const fetchEmployees = async () => {
+      setIsLoading(true);
+      try {
+        const response = await axios.get('http://localhost:5000/api/employees');
+        const sortedEmployees = response.data.sort((a, b) => a.id.localeCompare(b.id));
+        setEmployees(sortedEmployees);
+      } catch (err) {
+        setError('Failed to fetch employees');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchEmployees();
+  }, []);
+
+  // Handle form input changes with validation
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    const newValue = type === 'checkbox' ? checked : value;
+    setFormData({ ...formData, [name]: newValue });
+
+    let errors = { ...formErrors };
+    if (name === 'id' && modalMode === 'add' && value && !/^EMP\d{3}$/.test(value)) {
+      errors.id = 'ID must be EMPXXX (e.g., EMP123)';
+    } else {
+      delete errors.id;
+    }
+    if (name === 'name' && !value.trim()) {
+      errors.name = 'Name is required';
+    } else {
+      delete errors.name;
+    }
+    if (name === 'salary' && (value <= 0 || isNaN(value))) {
+      errors.salary = 'Salary must be positive';
+    } else {
+      delete errors.salary;
+    }
+    if (name === 'department' && !value) {
+      errors.department = 'Department is required';
+    } else {
+      delete errors.department;
+    }
+    if (name === 'joiningDate' && !value) {
+      errors.joiningDate = 'Joining date is required';
+    } else {
+      delete errors.joiningDate;
+    }
+    setFormErrors(errors);
+  };
+
+  // Handle search input
+  const handleSearchChange = (e) => {
+    setSearchQuery(e.target.value);
+    setCurrentPage(1);
+  };
+
+  // Filter employees (maintain sorted order)
+  const filteredEmployees = employees.filter(employee =>
+    employee.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    employee.id.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // Paginate employees
+  const indexOfLastEmployee = currentPage * employeesPerPage;
+  const indexOfFirstEmployee = indexOfLastEmployee - employeesPerPage;
+  const currentEmployees = filteredEmployees.slice(indexOfFirstEmployee, indexOfLastEmployee);
+
+  // Pagination handlers
+  const handleNextPage = () => {
+    if (currentPage < Math.ceil(filteredEmployees.length / employeesPerPage)) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
+  // Handle form submission
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      if (modalMode === 'add' && !/^EMP\d{3}$/.test(formData.id)) {
+        setError('Employee ID must be in format EMPXXX (e.g., EMP123)');
+        return;
+      }
+      if (!formData.name.trim()) {
+        setError('Employee name is required');
+        return;
+      }
+      if (!formData.department) {
+        setError('Department is required');
+        return;
+      }
+      if (!formData.joiningDate) {
+        setError('Joining date is required');
+        return;
+      }
+      if (formData.salary <= 0) {
+        setError('Salary must be a positive number');
+        return;
+      }
+      setIsLoading(true);
+      const payload = {
+        ...formData,
+        salary: parseFloat(formData.salary),
+        joiningDate: new Date(formData.joiningDate).toISOString(),
+      };
+      if (modalMode === 'add') {
+        const response = await axios.post('http://localhost:5000/api/employees', payload);
+        setEmployees([...employees, response.data].sort((a, b) => a.id.localeCompare(b.id)));
+      } else {
+        const response = await axios.put(`http://localhost:5000/api/employees/${formData.id}`, payload);
+        setEmployees(
+          employees.map(emp => emp.id === formData.id ? response.data.employee : emp)
+            .sort((a, b) => a.id.localeCompare(b.id))
+        );
+      }
+      setFormData({
+        id: '',
+        name: '',
+        department: '',
+        joiningDate: '',
+        salary: '',
+        status: true,
+      });
+      setFormErrors({});
+      setIsModalOpen(false);
+    } catch (err) {
+      setError(
+        err.response?.data?.errors
+          ? err.response.data.errors.join(', ')
+          : err.response?.data?.error || err.message || 'Failed to save employee'
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle edit
+  const handleEdit = (employee) => {
+    setFormData({
+      id: employee.id,
+      name: employee.name,
+      department: employee.department,
+      joiningDate: new Date(employee.joiningDate).toISOString().split('T')[0],
+      salary: employee.salary.toString(),
+      status: employee.status,
+    });
+    setModalMode('edit');
+    setIsModalOpen(true);
+  };
+
+  // Handle view details
+  const handleViewDetails = (employee) => {
+    setSelectedEmployee(employee);
+    setIsDetailsModalOpen(true);
+  };
+
+  // Handle delete
+  const handleDelete = async (id) => {
+    setError(null);
+    setIsLoading(true);
+    try {
+      await axios.delete(`http://localhost:5000/api/employees/${id}`);
+      setEmployees(employees.filter(employee => employee.id !== id));
+    } catch (err) {
+      setError('Failed to delete employee: ' + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Open add modal
+  const openAddModal = () => {
+    setFormData({
+      id: '',
+      name: '',
+      department: '',
+      joiningDate: '',
+      salary: '',
+      status: true,
+    });
+    setFormErrors({});
+    setModalMode('add');
+    setIsModalOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans transition-colors duration-300">
       {/* Navbar */}
